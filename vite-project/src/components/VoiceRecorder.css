@@ -26,6 +26,20 @@
   margin: 0;
 }
 
+.debug-info {
+  margin-top: 1rem;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.debug-info p {
+  margin: 0.2rem 0;
+  font-size: 0.8rem;
+}
+
 .recorder-controls {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 15px;

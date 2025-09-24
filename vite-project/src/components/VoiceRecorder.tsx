@@ -37,20 +37,33 @@ const VoiceRecorder: React.FC = () => {
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100
+        } 
+      });
       streamRef.current = stream;
       
       // Try different MIME types for better browser compatibility
-      let mimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/webm';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'audio/mp4';
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = '';
-          }
+      let mimeType = '';
+      const supportedTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/wav',
+        'audio/ogg;codecs=opus'
+      ];
+      
+      for (const type of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          break;
         }
       }
+      
+      console.log('Using MIME type:', mimeType || 'default');
       
       const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
       mediaRecorderRef.current = mediaRecorder;
@@ -59,6 +72,7 @@ const VoiceRecorder: React.FC = () => {
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
+          console.log('Data chunk received:', event.data.size, 'bytes');
         }
       };
 
@@ -68,6 +82,10 @@ const VoiceRecorder: React.FC = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
         
         console.log('Recording stopped, blob created:', audioBlob.size, 'bytes, type:', blobType);
+        
+        // Test if the blob is valid by creating a URL
+        const testUrl = URL.createObjectURL(audioBlob);
+        console.log('Test URL created:', testUrl);
         
         const newRecording: Recording = {
           id: Date.now().toString(),
@@ -80,9 +98,12 @@ const VoiceRecorder: React.FC = () => {
         setRecordings(prev => [...prev, newRecording]);
         setCurrentRecording(newRecording);
         setRecordingDuration(0);
+        
+        // Clean up test URL
+        URL.revokeObjectURL(testUrl);
       };
 
-      mediaRecorder.start(100); // Collect data every 100ms
+      mediaRecorder.start(1000); // Collect data every 1 second for better compatibility
       setIsRecording(true);
       setIsPaused(false);
 
@@ -144,12 +165,20 @@ const VoiceRecorder: React.FC = () => {
     const audioUrl = URL.createObjectURL(recording.audioBlob);
     console.log('Created audio URL:', audioUrl);
     
-    const audio = new Audio(audioUrl);
+    const audio = new Audio();
     audioRef.current = audio;
-
+    
+    // Set audio properties for better compatibility
+    audio.preload = 'auto';
+    audio.controls = false;
+    
     // Set up event listeners
     audio.onloadstart = () => {
       console.log('Audio loading started');
+    };
+
+    audio.onloadedmetadata = () => {
+      console.log('Audio metadata loaded, duration:', audio.duration);
     };
 
     audio.oncanplay = () => {
@@ -166,6 +195,10 @@ const VoiceRecorder: React.FC = () => {
       setPlayingId(recording.id);
     };
 
+    audio.onpause = () => {
+      console.log('Audio paused');
+    };
+
     audio.onended = () => {
       console.log('Audio playback ended');
       setIsPlaying(false);
@@ -176,18 +209,73 @@ const VoiceRecorder: React.FC = () => {
     audio.onerror = (e) => {
       console.error('Audio playback error:', e);
       console.error('Audio error details:', audio.error);
+      console.error('Audio network state:', audio.networkState);
+      console.error('Audio ready state:', audio.readyState);
+      
+      // Try fallback method
+      console.log('Trying fallback playback method...');
+      tryFallbackPlayback(recording, audioUrl);
+    };
+
+    audio.onstalled = () => {
+      console.log('Audio stalled');
+    };
+
+    audio.onwaiting = () => {
+      console.log('Audio waiting');
+    };
+
+    // Set the source and try to play
+    audio.src = audioUrl;
+    
+    // Wait a bit for the audio to load, then try to play
+    setTimeout(() => {
+      audio.play().catch(error => {
+        console.error('Error playing audio:', error);
+        console.error('Audio src:', audio.src);
+        console.error('Audio currentSrc:', audio.currentSrc);
+        tryFallbackPlayback(recording, audioUrl);
+      });
+    }, 100);
+  };
+
+  const tryFallbackPlayback = (recording: Recording, audioUrl: string) => {
+    console.log('Trying fallback playback method...');
+    
+    // Create a new audio element with different approach
+    const fallbackAudio = new Audio();
+    fallbackAudio.preload = 'metadata';
+    
+    fallbackAudio.oncanplay = () => {
+      console.log('Fallback audio can play');
+      fallbackAudio.play().then(() => {
+        console.log('Fallback audio started playing');
+        setIsPlaying(true);
+        setPlayingId(recording.id);
+        audioRef.current = fallbackAudio;
+      }).catch(error => {
+        console.error('Fallback audio play failed:', error);
+        setIsPlaying(false);
+        setPlayingId(null);
+        URL.revokeObjectURL(audioUrl);
+      });
+    };
+    
+    fallbackAudio.onended = () => {
+      console.log('Fallback audio ended');
       setIsPlaying(false);
       setPlayingId(null);
       URL.revokeObjectURL(audioUrl);
     };
-
-    // Try to play the audio
-    audio.play().catch(error => {
-      console.error('Error playing audio:', error);
+    
+    fallbackAudio.onerror = (e) => {
+      console.error('Fallback audio error:', e);
       setIsPlaying(false);
       setPlayingId(null);
       URL.revokeObjectURL(audioUrl);
-    });
+    };
+    
+    fallbackAudio.src = audioUrl;
   };
 
   const stopPlayback = () => {
@@ -221,6 +309,10 @@ const VoiceRecorder: React.FC = () => {
       <div className="recorder-header">
         <h1>🎤 Voice Recorder</h1>
         <p>Record and play back your voice messages</p>
+        <div className="debug-info">
+          <p>Browser: {navigator.userAgent.includes('Chrome') ? 'Chrome' : navigator.userAgent.includes('Firefox') ? 'Firefox' : 'Other'}</p>
+          <p>MediaRecorder supported: {typeof MediaRecorder !== 'undefined' ? 'Yes' : 'No'}</p>
+        </div>
       </div>
 
       <div className="recorder-controls">
